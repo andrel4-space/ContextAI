@@ -111,15 +111,15 @@ if st.button("Execute Human-Aware Strategic Optimization", use_container_width=T
         st.warning("Please deliver an objective payload before forcing execution.")
     else:
         output_text = None
+        final_engineered_payload = f"Energy Level: {energy_level}, Pressure: {pressure_state}\n\nObjective: {raw_prompt}"
         
         # =====================================================================
-        # 5. DYNAMIC PROMPT SYNTHESIS ENGINE (The Orchestration Intelligence)
+        # 5. DYNAMIC PROMPT SYNTHESIS ENGINE
         # =====================================================================
         with st.spinner("Synthesizing custom meta-cognitive prompting blueprint..."):
             try:
                 g_client = genai.Client(api_key=gemini_key)
                 
-                # Invisible Meta-Cognitive Analyzer Prompt Layer
                 meta_synthesis_prompt = f"""
                 You are the core Dynamic Prompt Synthesis Layer for ContextAI. 
                 Your job is NOT to answer the user's prompt. Your job is to analyze the human user's metrics and generate a highly custom system prompt engineering layout tailored to their cognitive capacity.
@@ -140,16 +140,13 @@ if st.button("Execute Human-Aware Strategic Optimization", use_container_width=T
                     contents=meta_synthesis_prompt,
                 )
                 dynamic_system_instruction = synthesis_response.text
-                
-                # Combine synthesized instruction blueprint with the raw prompt payload
                 final_engineered_payload = f"CRITICAL SYSTEM OPERATIONAL BLUEPRINT:\n{dynamic_system_instruction}\n\nUSER CORE TASK TO EXECUTE:\n{raw_prompt}"
                 
             except Exception as synthesis_error:
                 st.warning("⚠️ Synthesis node error. Falling back to baseline matrix rules...")
-                final_engineered_payload = f"Energy Level: {energy_level}, Pressure: {pressure_state}\n\nObjective: {raw_prompt}"
 
         # =====================================================================
-        # 6. RUN EXECUTABLE PIPELINE WITH DETECTED FALLBACKS
+        # 6. RUN EXECUTABLE PIPELINE WITH FIXED VARIABLE NAME
         # =====================================================================
         with st.spinner(f"Routing engineered payload through {primary_model}..."):
             try:
@@ -169,7 +166,7 @@ if st.button("Execute Human-Aware Strategic Optimization", use_container_width=T
                         try:
                             groq_client = Groq(api_key=groq_key)
                             chat_completion = groq_client.chat.completions.create(
-                                messages=[{"role": "user", "content": final_payload}],
+                                messages=[{"role": "user", "content": final_engineered_payload}], # FIXED THE VARIABLE TYPO HERE
                                 model=backup_model,
                             )
                             output_text = chat_completion.choices.message.content
