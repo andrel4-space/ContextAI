@@ -53,7 +53,6 @@ load_dotenv()
 gemini_key = os.getenv("GEMINI_API_KEY")
 groq_key = os.getenv("GROQ_API_KEY")
 
-# Extract environment models with safety fallbacks
 primary_model = os.getenv("PRIMARY_MODEL", "gemini-2.5-flash")
 backup_model = os.getenv("BACKUP_MODEL", "llama3-8b-8192")
 
@@ -68,7 +67,6 @@ if "active_response" not in st.session_state:
 with st.sidebar:
     st.title("🛡️ ContextAI Vault")
     st.write("Secure, local analytical metric logging system.")
-    
     st.markdown("### Historical Analytics Log")
     history = fetch_historical_metrics()
     
@@ -83,15 +81,14 @@ with st.sidebar:
                 st.write(f"**Pressure Context:** {item[2]}")
                 st.write(f"**Raw Objective:** *{item[3]}*")
                 st.markdown("---")
-                st.write(f"**Saved AI Output:**")
+                st.write("**Saved AI Output:**")
                 st.write(item[4])
 
 # =====================================================================
-# 4. MAIN INTERFACE ORCHESTRATION LAYER
+# 4. MAIN INTERFACE LAYER
 # =====================================================================
 st.title("🧠 ContextAI Core Console")
 st.write("Production-grade human-centric middleware deployment.")
-
 st.markdown("---")
 
 col1, col2 = st.columns(2)
@@ -113,27 +110,55 @@ if st.button("Execute Human-Aware Strategic Optimization", use_container_width=T
     elif not raw_prompt.strip():
         st.warning("Please deliver an objective payload before forcing execution.")
     else:
-        context_modifier = ""
-        if energy_level <= 2:
-            context_modifier += "CRITICAL FRAMEWORK: User cognitive energy is depleted. Restrict output to exactly ONE actionable task under 40 words. Maintain an encouraging tone. "
-        else:
-            context_modifier += "FRAMEWORK: User cognitive capacity is optimal. Provide an exhaustive, deeply structured analytical breakdown. "
-            
-        if pressure_state == "High Pressure":
-            context_modifier += "CONSTRAINT: User is operating under severe constraints. Eradicate all conversational pleasantries, introductory fluff, and padding. Prioritize raw utility. "
-
-        final_payload = f"{context_modifier}\n\nObjective to process: {raw_prompt}"
         output_text = None
-
-        with st.spinner(f"Processing primary intelligence pipeline ({primary_model})..."):
+        
+        # =====================================================================
+        # 5. DYNAMIC PROMPT SYNTHESIS ENGINE (The Orchestration Intelligence)
+        # =====================================================================
+        with st.spinner("Synthesizing custom meta-cognitive prompting blueprint..."):
             try:
                 g_client = genai.Client(api_key=gemini_key)
+                
+                # Invisible Meta-Cognitive Analyzer Prompt Layer
+                meta_synthesis_prompt = f"""
+                You are the core Dynamic Prompt Synthesis Layer for ContextAI. 
+                Your job is NOT to answer the user's prompt. Your job is to analyze the human user's metrics and generate a highly custom system prompt engineering layout tailored to their cognitive capacity.
+                
+                HUMAN METRICS:
+                - Cognitive Energy: {energy_level}/5 (1 is completely burned out/exhausted, 5 is peak focus)
+                - Environmental Pressure: {pressure_state}
+                
+                USER'S TARGET OBJECTIVE:
+                "{raw_prompt}"
+                
+                INSTRUCTIONS:
+                Based algorithmically on these human metrics, generate a precise, un-padded block of operational instructions that commands a secondary LLM exactly how to structure its delivery tone, length limits, information density, and actionability to protect the user's mind from information overload. Focus entirely on the human psychological constraints. Do not output conversational text or introductions. Output only the generated prompt constraint block.
+                """
+                
+                synthesis_response = g_client.models.generate_content(
+                    model=primary_model,
+                    contents=meta_synthesis_prompt,
+                )
+                dynamic_system_instruction = synthesis_response.text
+                
+                # Combine synthesized instruction blueprint with the raw prompt payload
+                final_engineered_payload = f"CRITICAL SYSTEM OPERATIONAL BLUEPRINT:\n{dynamic_system_instruction}\n\nUSER CORE TASK TO EXECUTE:\n{raw_prompt}"
+                
+            except Exception as synthesis_error:
+                st.warning("⚠️ Synthesis node error. Falling back to baseline matrix rules...")
+                final_engineered_payload = f"Energy Level: {energy_level}, Pressure: {pressure_state}\n\nObjective: {raw_prompt}"
+
+        # =====================================================================
+        # 6. RUN EXECUTABLE PIPELINE WITH DETECTED FALLBACKS
+        # =====================================================================
+        with st.spinner(f"Routing engineered payload through {primary_model}..."):
+            try:
                 response = g_client.models.generate_content(
                     model=primary_model,
-                    contents=final_payload,
+                    contents=final_engineered_payload,
                 )
                 output_text = response.text
-                st.success(f"Primary Route Success: Handled by {primary_model}")
+                st.success(f"Primary Route Success: Handled dynamically by {primary_model}")
             except Exception as gemini_error:
                 st.warning(f"⚠️ Primary route offline. Activating Failover Protocol...")
                 
