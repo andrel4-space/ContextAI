@@ -1,6 +1,7 @@
 import html
 import json
 import re
+import uuid
 import streamlit as st
 import streamlit.components.v1 as components
 import os
@@ -10,10 +11,49 @@ from google import genai
 from groq import Groq
 from dotenv import load_dotenv
 
+load_dotenv()
+
+
+def is_dev_mode():
+    return os.getenv("CONTEXTAI_DEBUG", "").lower() in ("1", "true", "yes")
+
+
 # =====================================================================
-# 1. DATABASE SYSTEM LAYER
+# 1. DATABASE SYSTEM LAYER (Supabase cloud + SQLite fallback)
 # =====================================================================
-def initialize_database():
+def _clean_env(value):
+    if not value:
+        return ""
+    return value.strip().strip('"').strip("'")
+
+
+supabase_url = _clean_env(os.getenv("SUPABASE_URL"))
+supabase_key = _clean_env(
+    os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+)
+_supabase_client = None
+
+
+def use_supabase():
+    return bool(supabase_url and supabase_key)
+
+
+def get_supabase():
+    global _supabase_client
+    if _supabase_client is None:
+        from supabase import create_client
+
+        _supabase_client = create_client(supabase_url, supabase_key)
+    return _supabase_client
+
+
+def get_client_id():
+    if "client_id" not in st.session_state:
+        st.session_state.client_id = str(uuid.uuid4())
+    return st.session_state.client_id
+
+
+def initialize_sqlite_database():
     conn = sqlite3.connect("context_vault.db")
     cursor = conn.cursor()
     cursor.execute("""
@@ -29,27 +69,71 @@ def initialize_database():
     conn.commit()
     conn.close()
 
+
 def log_session_to_database(energy, pressure, original_text, final_output):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
-        conn = sqlite3.connect("context_vault.db")
-        cursor = conn.cursor()
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute("""
-            INSERT INTO cognitive_logs (timestamp, energy_score, pressure_threshold, raw_prompt, optimized_output)
-            VALUES (?, ?, ?, ?, ?)
-        """, (now, energy, pressure, original_text, final_output))
-        conn.commit()
-        conn.close()
+        if use_supabase():
+            get_supabase().table("cognitive_logs").insert(
+                {
+                    "client_id": get_client_id(),
+                    "timestamp": now,
+                    "energy_score": energy,
+                    "pressure_threshold": pressure,
+                    "raw_prompt": original_text,
+                    "optimized_output": final_output,
+                }
+            ).execute()
+        else:
+            initialize_sqlite_database()
+            conn = sqlite3.connect("context_vault.db")
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO cognitive_logs (timestamp, energy_score, pressure_threshold, raw_prompt, optimized_output)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (now, energy, pressure, original_text, final_output),
+            )
+            conn.commit()
+            conn.close()
     except Exception as db_err:
-        st.warning(f"Could not save this session: {db_err}")
+        if is_dev_mode():
+            st.warning(f"Could not save this session: {db_err}")
+        else:
+            st.warning("Could not save this session. Your steps still show above.")
+
 
 def fetch_historical_metrics():
     try:
+        if use_supabase():
+            response = (
+                get_supabase()
+                .table("cognitive_logs")
+                .select("timestamp, energy_score, pressure_threshold, raw_prompt, optimized_output")
+                .eq("client_id", get_client_id())
+                .order("id", desc=True)
+                .limit(50)
+                .execute()
+            )
+            rows = response.data or []
+            return [
+                (
+                    row["timestamp"],
+                    row["energy_score"],
+                    row["pressure_threshold"],
+                    row["raw_prompt"],
+                    row["optimized_output"],
+                )
+                for row in rows
+            ]
+
+        initialize_sqlite_database()
         conn = sqlite3.connect("context_vault.db")
         cursor = conn.cursor()
         cursor.execute(
             "SELECT timestamp, energy_score, pressure_threshold, raw_prompt, optimized_output "
-            "FROM cognitive_logs ORDER BY id DESC"
+            "FROM cognitive_logs ORDER BY id DESC LIMIT 50"
         )
         logs = cursor.fetchall()
         conn.close()
@@ -57,13 +141,10 @@ def fetch_historical_metrics():
     except Exception:
         return []
 
-initialize_database()
 
 # =====================================================================
 # 2. CONFIGURATION
 # =====================================================================
-load_dotenv()
-
 gemini_key = os.getenv("GEMINI_API_KEY")
 groq_key = os.getenv("GROQ_API_KEY")
 
@@ -167,9 +248,6 @@ def run_backup_model(payload):
         model=backup_model,
     )
     return chat_completion.choices[0].message.content
-
-def is_dev_mode():
-    return os.getenv("CONTEXTAI_DEBUG", "").lower() in ("1", "true", "yes")
 
 def api_keys_configured():
     return bool(gemini_key or groq_key)
@@ -444,6 +522,13 @@ if "font_large" not in st.session_state:
 with st.sidebar:
     st.title("🌙 ContextAI")
     st.caption("For students working late.")
+    if use_supabase():
+        st.caption("☁️ Sessions saved to cloud")
+    else:
+        st.caption("💾 Local save — add SUPABASE_URL + SUPABASE_KEY to `.env`")
+    if is_dev_mode() and use_supabase():
+        if supabase_key.startswith("sb_publishable_"):
+            st.warning("SUPABASE_KEY looks like a publishable key. Use the **secret** or **service_role** key.")
 
     if not api_keys_configured() and is_dev_mode():
         st.error("Add GEMINI_API_KEY and/or GROQ_API_KEY to `.env` or host settings.")
