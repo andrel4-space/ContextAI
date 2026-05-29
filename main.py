@@ -172,7 +172,7 @@ if st.button("Execute Human-Aware Strategic Optimization", use_container_width=T
                             messages=[{"role": "user", "content": final_engineered_payload}],
                             model=backup_model,
                         )
-                        output_text = chat_completion.choices.message.content
+                        output_text = chat_completion.choices[0].message.content
                         st.success(f"⚡ Failover Active: Instantly recovered via {backup_model}")
                     except Exception as groq_error:
                         st.error(f"Critical System Failure: All primary and backup intelligence nodes are completely unreachable. Details: {groq_error}")
