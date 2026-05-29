@@ -1,5 +1,8 @@
 import html
+import json
+import re
 import streamlit as st
+import streamlit.components.v1 as components
 import os
 import sqlite3
 from datetime import datetime
@@ -165,6 +168,116 @@ def run_backup_model(payload):
     )
     return chat_completion.choices[0].message.content
 
+def is_dev_mode():
+    return os.getenv("CONTEXTAI_DEBUG", "").lower() in ("1", "true", "yes")
+
+def api_keys_configured():
+    return bool(gemini_key or groq_key)
+
+def parse_next_steps(text):
+    """Try to split AI output into three numbered steps for card UI."""
+    if not text:
+        return None
+    steps = []
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        match = re.match(r"^[\-*•]?\s*([1-3])\s*[\.\)\:\-]\s*(.+)$", line)
+        if match:
+            steps.append(match.group(2).strip())
+            continue
+        match = re.match(r"^[\-*•]\s*(.+)$", line)
+        if match and len(steps) < 3:
+            steps.append(match.group(1).strip())
+    if len(steps) >= 3:
+        return steps[:3]
+    chunks = [c.strip() for c in re.split(r"\n\s*\n", text.strip()) if c.strip()]
+    if len(chunks) >= 3:
+        return chunks[:3]
+    return None
+
+def steps_plain_text(steps):
+    return "\n".join(f"{i + 1}. {step}" for i, step in enumerate(steps))
+
+def render_output_actions(plain_text):
+    payload = json.dumps(plain_text)
+    components.html(
+        f"""
+        <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin:0.5rem 0 1rem 0;">
+          <button id="copySteps" style="
+            padding:0.45rem 0.9rem;border-radius:10px;border:1px solid rgba(126,184,218,0.4);
+            background:rgba(126,184,218,0.15);color:#e8ecf4;cursor:pointer;font-size:0.9rem;">
+            Copy steps
+          </button>
+          <button id="readSteps" style="
+            padding:0.45rem 0.9rem;border-radius:10px;border:1px solid rgba(126,184,218,0.4);
+            background:rgba(126,184,218,0.15);color:#e8ecf4;cursor:pointer;font-size:0.9rem;">
+            Read aloud
+          </button>
+          <span id="copyStatus" style="color:#7eb8da;font-size:0.85rem;align-self:center;"></span>
+        </div>
+        <script>
+        const text = {payload};
+        document.getElementById("copySteps").onclick = async () => {{
+          try {{
+            await navigator.clipboard.writeText(text);
+            document.getElementById("copyStatus").textContent = "Copied!";
+            setTimeout(() => document.getElementById("copyStatus").textContent = "", 2000);
+          }} catch (e) {{
+            document.getElementById("copyStatus").textContent = "Copy failed — use Download below";
+          }}
+        }};
+        document.getElementById("readSteps").onclick = () => {{
+          window.speechSynthesis.cancel();
+          const u = new SpeechSynthesisUtterance(text);
+          u.rate = 0.92;
+          window.speechSynthesis.speak(u);
+        }};
+        </script>
+        """,
+        height=70,
+    )
+
+def render_step_cards(steps):
+    for i, step in enumerate(steps, start=1):
+        st.markdown(
+            f"""
+            <div class="step-card">
+              <div class="step-number">{i}</div>
+              <div class="step-text">{html.escape(step)}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+def render_results(output_text):
+    steps = parse_next_steps(output_text)
+    plain = steps_plain_text(steps) if steps else output_text
+    st.markdown('<div id="results-anchor"></div>', unsafe_allow_html=True)
+    st.markdown("#### Your next steps")
+    render_output_actions(plain)
+    if steps:
+        render_step_cards(steps)
+    else:
+        st.markdown(
+            f'<div class="next-steps-card">{html.escape(output_text)}</div>',
+            unsafe_allow_html=True,
+        )
+    st.download_button(
+        label="Download steps",
+        data=plain,
+        file_name="contextai-next-steps.txt",
+        mime="text/plain",
+        use_container_width=True,
+    )
+
+def show_unavailable_message():
+    if is_dev_mode():
+        st.error("API keys missing. Set GEMINI_API_KEY and/or GROQ_API_KEY in `.env` or host settings.")
+    else:
+        st.error("ContextAI is briefly unavailable. Please try again in a few minutes.")
+
 # =====================================================================
 # 3. UI
 # =====================================================================
@@ -261,6 +374,48 @@ def inject_theme():
             border: 1px solid rgba(255, 255, 255, 0.06);
             border-radius: 12px;
         }
+        .main-wrap {
+            max-width: 42rem;
+            margin: 0 auto;
+            padding: 0 0.5rem 2rem 0.5rem;
+        }
+        .step-card {
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+            margin-bottom: 0.75rem;
+            padding: 1rem 1.1rem;
+            border-radius: 14px;
+            background: rgba(126, 184, 218, 0.08);
+            border: 1px solid rgba(126, 184, 218, 0.2);
+        }
+        .step-number {
+            flex-shrink: 0;
+            width: 2rem;
+            height: 2rem;
+            line-height: 2rem;
+            text-align: center;
+            border-radius: 50%;
+            background: rgba(126, 184, 218, 0.35);
+            color: #0c1018 !important;
+            font-weight: 700;
+            font-size: 1rem;
+        }
+        .step-text {
+            color: #e8ecf4 !important;
+            font-size: 1.08rem;
+            line-height: 1.5;
+            padding-top: 0.15rem;
+        }
+        .font-large .step-text { font-size: 1.22rem !important; }
+        .font-large .hero-tagline { font-size: 1.15rem !important; }
+        .preset-row button {
+            font-size: 0.88rem !important;
+        }
+        @media (max-width: 768px) {
+            .main-wrap { padding: 0 0.25rem 2rem 0.25rem; }
+            .step-text { font-size: 1.12rem !important; }
+        }
         #MainMenu { visibility: hidden; }
         footer { visibility: hidden; }
         </style>
@@ -271,7 +426,7 @@ def inject_theme():
 
 st.set_page_config(
     page_title="ContextAI — Study when you're tired",
-    layout="wide",
+    layout="centered",
     page_icon="🌙",
 )
 
@@ -279,87 +434,121 @@ inject_theme()
 
 if "active_response" not in st.session_state:
     st.session_state.active_response = None
+if "energy" not in st.session_state:
+    st.session_state.energy = 2
+if "pressure" not in st.session_state:
+    st.session_state.pressure = "Moderate"
+if "font_large" not in st.session_state:
+    st.session_state.font_large = False
 
 with st.sidebar:
     st.title("🌙 ContextAI")
-    st.caption("For students working late — short answers, clear next steps.")
+    st.caption("For students working late.")
 
-    if not gemini_key and not groq_key:
-        st.error("Add GEMINI_API_KEY and/or GROQ_API_KEY to your `.env` file or hosting settings.")
+    if not api_keys_configured() and is_dev_mode():
+        st.error("Add GEMINI_API_KEY and/or GROQ_API_KEY to `.env` or host settings.")
 
-    st.markdown("### Past sessions")
-    history = fetch_historical_metrics()
+    st.markdown("### Recent sessions")
+    history = fetch_historical_metrics()[:5]
 
     if not history:
-        st.caption("Your study sessions will show up here.")
+        st.caption("After your first run, your last sessions appear here.")
     else:
-        st.metric(label="Sessions saved", value=len(history))
-        st.markdown("---")
         for item in history:
-            with st.expander(f"🕒 {item[0]} · energy {item[1]}/5"):
+            preview = item[3][:48] + ("…" if len(item[3]) > 48 else "")
+            with st.expander(f"{item[0]} · ⚡{item[1]}/5"):
+                st.caption(preview)
                 st.write(f"**Pressure:** {item[2]}")
-                st.write(f"**You asked:** {item[3]}")
-                st.markdown("**Next steps you got:**")
-                st.markdown(
-                    f'<div class="next-steps-card">{html.escape(item[4])}</div>',
-                    unsafe_allow_html=True,
-                )
+                parsed = parse_next_steps(item[4])
+                if parsed:
+                    for i, step in enumerate(parsed, 1):
+                        st.write(f"**{i}.** {step}")
+                else:
+                    st.write(item[4])
+
+font_class = "font-large" if st.session_state.font_large else ""
+st.markdown(f'<div class="main-wrap {font_class}">', unsafe_allow_html=True)
 
 st.markdown("## 🌙 ContextAI")
 st.markdown(
-    '<p class="hero-tagline">Turn one assignment into what you can actually do tonight. '
-    "Built for night-shift and working students — when your energy is low, you get "
-    "<strong>only 3 short next steps</strong>, not a wall of text.</p>",
+    '<p class="hero-tagline">Paste your assignment. Get <strong>3 next steps</strong> '
+    "you can start tonight — sized to how tired you are.</p>",
     unsafe_allow_html=True,
 )
 
-st.markdown("")
+fa, fb = st.columns(2)
+with fa:
+    if st.button("A", help="Normal text size", use_container_width=True):
+        st.session_state.font_large = False
+        st.rerun()
+with fb:
+    if st.button("A+", help="Larger text size", use_container_width=True):
+        st.session_state.font_large = True
+        st.rerun()
 
-col1, col2 = st.columns(2, gap="large")
+st.markdown("#### 1. Your assignment")
+raw_prompt = st.text_area(
+    "Assignment",
+    placeholder="Paste the assignment, rubric, or what you're stuck on…",
+    height=130,
+    label_visibility="collapsed",
+    key="assignment_input",
+)
 
-with col1:
-    st.markdown("#### How are you right now?")
-    energy_level = st.slider(
-        "Energy tonight (1 = exhausted, 5 = wide awake):",
-        min_value=1,
-        max_value=5,
-        value=2,
+st.markdown("#### 2. Quick mood")
+st.caption("Tap a preset or adjust the sliders.")
+p1, p2, p3 = st.columns(3)
+with p1:
+    if st.button("I'm wiped", use_container_width=True):
+        st.session_state.energy = 1
+        st.session_state.pressure = "Moderate"
+        st.rerun()
+with p2:
+    if st.button("Normal night", use_container_width=True):
+        st.session_state.energy = 3
+        st.session_state.pressure = "Moderate"
+        st.rerun()
+with p3:
+    if st.button("Due tomorrow", use_container_width=True):
+        st.session_state.energy = 2
+        st.session_state.pressure = "High Pressure"
+        st.rerun()
+
+energy_level = st.slider(
+    "Energy tonight (1 = exhausted, 5 = wide awake)",
+    min_value=1,
+    max_value=5,
+    key="energy",
+)
+st.caption(ENERGY_LABELS.get(energy_level, ""))
+if is_low_energy(energy_level):
+    st.markdown(
+        '<p class="low-energy-chip">Tonight: exactly 3 short steps — nothing extra</p>',
+        unsafe_allow_html=True,
     )
-    st.caption(ENERGY_LABELS.get(energy_level, ""))
-    if is_low_energy(energy_level):
-        st.markdown(
-            '<p class="low-energy-chip">Low energy — exactly 3 short next steps, nothing extra</p>',
-            unsafe_allow_html=True,
-        )
 
-    pressure_state = st.select_slider(
-        "Deadline pressure:",
-        options=["Chill", "Moderate", "High Pressure"],
-    )
+pressure_state = st.select_slider(
+    "Deadline pressure",
+    options=["Chill", "Moderate", "High Pressure"],
+    key="pressure",
+)
 
-with col2:
-    st.markdown("#### Your assignment")
-    raw_prompt = st.text_area(
-        "Paste the assignment, rubric, or what you're stuck on:",
-        placeholder=(
-            "Example: Write a 500-word essay on the causes of WWI. "
-            "Due Friday. I haven't started."
-        ),
-        height=140,
-        label_visibility="collapsed",
-    )
+run_col, clear_col = st.columns([3, 1])
+with run_col:
+    run_clicked = st.button("Get my next steps", type="primary", use_container_width=True)
+with clear_col:
+    if st.button("Start over", use_container_width=True):
+        st.session_state.active_response = None
+        st.rerun()
 
-st.markdown("")
-
-if st.button("Get my next steps", type="primary", use_container_width=True):
-    if not gemini_key and not groq_key:
-        st.error("API keys are missing. Add them to `.env` or your host's environment variables.")
+if run_clicked:
+    if not api_keys_configured():
+        show_unavailable_message()
     elif not raw_prompt.strip():
-        st.warning("Paste your assignment or question first.")
+        st.warning("Paste your assignment first.")
     else:
         output_text = None
-
-        with st.spinner("Figuring out how much you can handle tonight..."):
+        with st.spinner("Breaking this into tonight's steps…"):
             try:
                 if gemini_key:
                     meta_synthesis_prompt = build_meta_synthesis_prompt(
@@ -372,43 +561,38 @@ if st.button("Get my next steps", type="primary", use_container_width=True):
                         pressure_state,
                         raw_prompt,
                     )
-                else:
+                    output_text = run_primary_model(final_engineered_payload)
+                elif groq_key:
                     final_engineered_payload = build_fallback_payload(
                         energy_level, pressure_state, raw_prompt
                     )
-            except Exception:
-                final_engineered_payload = build_fallback_payload(
-                    energy_level, pressure_state, raw_prompt
-                )
-
-        with st.spinner("Writing your next steps..."):
-            try:
-                if gemini_key:
-                    output_text = run_primary_model(final_engineered_payload)
-                    st.success("Ready — sized for your energy tonight.")
-                elif groq_key:
                     output_text = run_backup_model(final_engineered_payload)
-                    st.success("Ready — served via backup.")
-                else:
-                    st.error("No API keys configured.")
             except Exception:
-                if groq_key:
-                    try:
+                try:
+                    final_engineered_payload = build_fallback_payload(
+                        energy_level, pressure_state, raw_prompt
+                    )
+                    if groq_key:
                         output_text = run_backup_model(final_engineered_payload)
-                        st.success("Primary AI was busy — used backup.")
-                    except Exception as groq_error:
-                        st.error(f"Could not reach AI right now: {groq_error}")
-                else:
-                    st.error("Could not reach AI. Check your API keys and try again.")
+                    elif gemini_key:
+                        output_text = run_primary_model(final_engineered_payload)
+                except Exception as err:
+                    if is_dev_mode():
+                        st.error(f"AI error: {err}")
+                    else:
+                        st.error("Could not get steps right now. Wait a moment and try again.")
 
         if output_text:
             log_session_to_database(energy_level, pressure_state, raw_prompt, output_text)
             st.session_state.active_response = output_text
+            st.toast("Your next steps are ready.")
             st.rerun()
 
 if st.session_state.active_response:
-    st.markdown("#### Your next steps")
-    st.markdown(
-        f'<div class="next-steps-card">{html.escape(st.session_state.active_response)}</div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown("---")
+    render_results(st.session_state.active_response)
+    if st.button("Start over with a new assignment", use_container_width=True):
+        st.session_state.active_response = None
+        st.rerun()
+
+st.markdown("</div>", unsafe_allow_html=True)
