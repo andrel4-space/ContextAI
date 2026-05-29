@@ -1,3 +1,4 @@
+import html
 import streamlit as st
 import os
 import sqlite3
@@ -167,11 +168,114 @@ def run_backup_model(payload):
 # =====================================================================
 # 3. UI
 # =====================================================================
+def inject_theme():
+    st.markdown(
+        """
+        <style>
+        /* Full-page seamless gradient */
+        .stApp {
+            background: linear-gradient(165deg, #080b12 0%, #0f1624 38%, #121a2e 72%, #0d1219 100%);
+            background-attachment: fixed;
+        }
+        [data-testid="stAppViewContainer"] > .main {
+            background: transparent;
+        }
+        [data-testid="stHeader"] {
+            background: transparent;
+        }
+        section[data-testid="stSidebar"] {
+            background: linear-gradient(180deg, rgba(12, 16, 28, 0.97) 0%, rgba(18, 26, 42, 0.92) 100%);
+            border-right: 1px solid rgba(255, 255, 255, 0.06);
+        }
+        section[data-testid="stSidebar"] > div {
+            background: transparent;
+        }
+        /* Softer blocks — no harsh white panels */
+        [data-testid="stVerticalBlock"] > div:has(> [data-testid="stVerticalBlockBorderWrapper"]) {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            border-radius: 16px;
+            padding: 0.25rem 0.5rem;
+            backdrop-filter: blur(12px);
+        }
+        h1, h2, h3, label, p, span, .stMarkdown {
+            color: #e8ecf4 !important;
+        }
+        .hero-tagline {
+            color: #9aa8bc !important;
+            font-size: 1.05rem;
+            line-height: 1.6;
+            max-width: 42rem;
+        }
+        .low-energy-chip {
+            display: inline-block;
+            margin-top: 0.5rem;
+            padding: 0.5rem 0.85rem;
+            border-radius: 999px;
+            background: rgba(126, 184, 218, 0.12);
+            border: 1px solid rgba(126, 184, 218, 0.28);
+            color: #b8d4e8 !important;
+            font-size: 0.9rem;
+        }
+        .next-steps-card {
+            margin-top: 1rem;
+            padding: 1.25rem 1.35rem;
+            border-radius: 16px;
+            background: rgba(126, 184, 218, 0.08);
+            border: 1px solid rgba(126, 184, 218, 0.22);
+            color: #e8ecf4;
+            font-size: 1.05rem;
+            line-height: 1.65;
+            white-space: pre-wrap;
+        }
+        div[data-testid="stTextArea"] textarea {
+            background: rgba(0, 0, 0, 0.25) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            border-radius: 12px !important;
+            color: #e8ecf4 !important;
+        }
+        div[data-testid="stSlider"] [data-baseweb="slider"] {
+            margin-top: 0.25rem;
+        }
+        .stButton > button[kind="primary"] {
+            border-radius: 12px;
+            border: none;
+            background: linear-gradient(135deg, #5a8fb8 0%, #7eb8da 100%);
+            color: #0c1018;
+            font-weight: 600;
+            padding: 0.65rem 1rem;
+            box-shadow: 0 4px 20px rgba(126, 184, 218, 0.25);
+        }
+        .stButton > button[kind="primary"]:hover {
+            background: linear-gradient(135deg, #6a9fc8 0%, #8ec8ea 100%);
+            box-shadow: 0 6px 24px rgba(126, 184, 218, 0.35);
+        }
+        div[data-testid="stMetric"] {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 12px;
+            padding: 0.75rem 1rem;
+        }
+        div[data-testid="stExpander"] {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 12px;
+        }
+        #MainMenu { visibility: hidden; }
+        footer { visibility: hidden; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 st.set_page_config(
     page_title="ContextAI — Study when you're tired",
     layout="wide",
     page_icon="🌙",
 )
+
+inject_theme()
 
 if "active_response" not in st.session_state:
     st.session_state.active_response = None
@@ -187,7 +291,7 @@ with st.sidebar:
     history = fetch_historical_metrics()
 
     if not history:
-        st.info("Your study sessions will show up here.")
+        st.caption("Your study sessions will show up here.")
     else:
         st.metric(label="Sessions saved", value=len(history))
         st.markdown("---")
@@ -196,21 +300,25 @@ with st.sidebar:
                 st.write(f"**Pressure:** {item[2]}")
                 st.write(f"**You asked:** {item[3]}")
                 st.markdown("**Next steps you got:**")
-                st.info(item[4])
+                st.markdown(
+                    f'<div class="next-steps-card">{html.escape(item[4])}</div>',
+                    unsafe_allow_html=True,
+                )
 
-st.title("🌙 ContextAI")
-st.subheader("Turn one assignment into what you can actually do tonight.")
-st.write(
-    "Built for night-shift and working students. Paste your assignment — "
-    "when your energy is low, you get **only 3 short next steps**, not a wall of text."
+st.markdown("## 🌙 ContextAI")
+st.markdown(
+    '<p class="hero-tagline">Turn one assignment into what you can actually do tonight. '
+    "Built for night-shift and working students — when your energy is low, you get "
+    "<strong>only 3 short next steps</strong>, not a wall of text.</p>",
+    unsafe_allow_html=True,
 )
 
-st.markdown("---")
+st.markdown("")
 
-col1, col2 = st.columns(2)
+col1, col2 = st.columns(2, gap="large")
 
 with col1:
-    st.header("How are you right now?")
+    st.markdown("#### How are you right now?")
     energy_level = st.slider(
         "Energy tonight (1 = exhausted, 5 = wide awake):",
         min_value=1,
@@ -219,7 +327,10 @@ with col1:
     )
     st.caption(ENERGY_LABELS.get(energy_level, ""))
     if is_low_energy(energy_level):
-        st.info("Low energy mode: you'll get exactly **3 short next steps** — nothing extra.")
+        st.markdown(
+            '<p class="low-energy-chip">Low energy — exactly 3 short next steps, nothing extra</p>',
+            unsafe_allow_html=True,
+        )
 
     pressure_state = st.select_slider(
         "Deadline pressure:",
@@ -227,7 +338,7 @@ with col1:
     )
 
 with col2:
-    st.header("Your assignment")
+    st.markdown("#### Your assignment")
     raw_prompt = st.text_area(
         "Paste the assignment, rubric, or what you're stuck on:",
         placeholder=(
@@ -235,9 +346,10 @@ with col2:
             "Due Friday. I haven't started."
         ),
         height=140,
+        label_visibility="collapsed",
     )
 
-st.markdown("---")
+st.markdown("")
 
 if st.button("Get my next steps", type="primary", use_container_width=True):
     if not gemini_key and not groq_key:
@@ -295,5 +407,8 @@ if st.button("Get my next steps", type="primary", use_container_width=True):
             st.rerun()
 
 if st.session_state.active_response:
-    st.markdown("### Your next steps")
-    st.success(st.session_state.active_response)
+    st.markdown("#### Your next steps")
+    st.markdown(
+        f'<div class="next-steps-card">{html.escape(st.session_state.active_response)}</div>',
+        unsafe_allow_html=True,
+    )
