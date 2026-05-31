@@ -166,15 +166,6 @@ def render_auth_screen():
                     else:
                         st.error(err or "Sign-up failed.")
 
-    st.markdown(
-        """
-        <p style="text-align:center;color:#5a6478;font-size:0.82rem;margin-top:2rem;">
-            No account needed for local use — 
-            <span style="color:#7eb8da;">just close this and remove SUPABASE_URL from your .env</span>
-        </p>
-        """,
-        unsafe_allow_html=True,
-    )
     return False
 
 
@@ -471,13 +462,21 @@ def render_output_actions(plain_text):
     )
 
 
+def clean_markdown(text):
+    """Strip bold/italic markdown syntax from text."""
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    text = re.sub(r'__(.+?)__', r'\1', text)
+    text = re.sub(r'_(.+?)_', r'\1', text)
+    return text.strip()
+
 def render_step_cards(steps):
     for i, step in enumerate(steps, start=1):
         st.markdown(
             f"""
             <div class="step-card">
               <div class="step-number">{i}</div>
-              <div class="step-text">{html.escape(step)}</div>
+              <div class="step-text">{html.escape(clean_markdown(step))}</div>
             </div>
             """,
             unsafe_allow_html=True,
