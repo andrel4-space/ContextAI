@@ -42,17 +42,145 @@ def get_supabase():
     global _supabase_client
     if _supabase_client is None:
         from supabase import create_client
-
         _supabase_client = create_client(supabase_url, supabase_key)
     return _supabase_client
 
 
+# =====================================================================
+# 2. AUTH LAYER
+# =====================================================================
+def get_current_user():
+    """Return the authenticated Supabase user, or None."""
+    return st.session_state.get("auth_user", None)
+
+
 def get_client_id():
+    """
+    Returns the stable client ID.
+    - If logged in: use Supabase user ID (persistent across devices)
+    - If not: use a session-scoped UUID (local/anonymous mode)
+    """
+    user = get_current_user()
+    if user:
+        return user.id
     if "client_id" not in st.session_state:
         st.session_state.client_id = str(uuid.uuid4())
     return st.session_state.client_id
 
 
+def try_sign_up(email, password):
+    """Sign up via Supabase Auth. Returns (user_or_None, error_msg_or_None)."""
+    try:
+        sb = get_supabase()
+        res = sb.auth.sign_up({"email": email, "password": password})
+        if res.user:
+            return res.user, None
+        return None, "Sign-up failed. Try a different email."
+    except Exception as e:
+        return None, str(e)
+
+
+def try_sign_in(email, password):
+    """Sign in via Supabase Auth. Returns (user_or_None, error_msg_or_None)."""
+    try:
+        sb = get_supabase()
+        res = sb.auth.sign_in_with_password({"email": email, "password": password})
+        if res.user:
+            return res.user, None
+        return None, "Invalid email or password."
+    except Exception as e:
+        msg = str(e)
+        if "Invalid login" in msg or "invalid_credentials" in msg:
+            return None, "Invalid email or password."
+        return None, msg
+
+
+def try_sign_out():
+    try:
+        if use_supabase():
+            get_supabase().auth.sign_out()
+    except Exception:
+        pass
+    st.session_state.pop("auth_user", None)
+    st.session_state.pop("client_id", None)
+    st.session_state.pop("active_response", None)
+
+
+def render_auth_screen():
+    """Renders the login/signup screen. Returns True if user just authenticated."""
+    inject_theme()
+
+    st.markdown(
+        """
+        <div style="text-align:center;padding:2.5rem 0 1rem 0;">
+            <div style="font-size:2.8rem;margin-bottom:0.4rem;">🌙</div>
+            <h1 style="font-size:2rem;font-weight:700;letter-spacing:-0.5px;margin:0;">ContextAI</h1>
+            <p style="color:#9aa8bc;font-size:1rem;margin-top:0.4rem;">
+                Your AI study partner — remembers you, adapts to you.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    tab_login, tab_signup = st.tabs(["Log in", "Sign up"])
+
+    with tab_login:
+        with st.form("login_form"):
+            email = st.text_input("Email", placeholder="you@example.com")
+            password = st.text_input("Password", type="password", placeholder="••••••••")
+            submitted = st.form_submit_button("Log in", use_container_width=True, type="primary")
+            if submitted:
+                if not email or not password:
+                    st.error("Please enter your email and password.")
+                else:
+                    with st.spinner("Logging in…"):
+                        user, err = try_sign_in(email.strip(), password)
+                    if user:
+                        st.session_state.auth_user = user
+                        st.success("Welcome back!")
+                        st.rerun()
+                    else:
+                        st.error(err or "Login failed.")
+
+    with tab_signup:
+        with st.form("signup_form"):
+            new_email = st.text_input("Email", placeholder="you@example.com", key="su_email")
+            new_pass = st.text_input("Password", type="password", placeholder="At least 6 characters", key="su_pass")
+            new_pass2 = st.text_input("Confirm password", type="password", placeholder="Same again", key="su_pass2")
+            submitted2 = st.form_submit_button("Create account", use_container_width=True, type="primary")
+            if submitted2:
+                if not new_email or not new_pass:
+                    st.error("Please fill in all fields.")
+                elif new_pass != new_pass2:
+                    st.error("Passwords don't match.")
+                elif len(new_pass) < 6:
+                    st.error("Password must be at least 6 characters.")
+                else:
+                    with st.spinner("Creating your account…"):
+                        user, err = try_sign_up(new_email.strip(), new_pass)
+                    if user:
+                        st.session_state.auth_user = user
+                        st.success("Account created! You're in.")
+                        st.rerun()
+                    else:
+                        st.error(err or "Sign-up failed.")
+
+    st.markdown(
+        """
+        <p style="text-align:center;color:#5a6478;font-size:0.82rem;margin-top:2rem;">
+            No account needed for local use — 
+            <span style="color:#7eb8da;">just close this and remove SUPABASE_URL from your .env</span>
+        </p>
+        """,
+        unsafe_allow_html=True,
+    )
+    return False
+
+
+# =====================================================================
+# 3. DATABASE OPERATIONS
+# =====================================================================
 def initialize_sqlite_database():
     conn = sqlite3.connect("context_vault.db")
     cursor = conn.cursor()
@@ -142,8 +270,23 @@ def fetch_historical_metrics():
         return []
 
 
+def fetch_energy_pattern():
+    """
+    Returns the user's most common energy level from recent sessions.
+    Used to pre-fill the slider for returning users.
+    """
+    try:
+        history = fetch_historical_metrics()
+        if len(history) < 3:
+            return None
+        scores = [row[1] for row in history[:10]]
+        return round(sum(scores) / len(scores))
+    except Exception:
+        return None
+
+
 # =====================================================================
-# 2. CONFIGURATION
+# 4. CONFIGURATION
 # =====================================================================
 gemini_key = os.getenv("GEMINI_API_KEY")
 groq_key = os.getenv("GROQ_API_KEY")
@@ -159,8 +302,10 @@ ENERGY_LABELS = {
     5: "Wide awake",
 }
 
+
 def is_low_energy(energy_level):
     return energy_level <= 2
+
 
 def build_meta_synthesis_prompt(energy_level, pressure_state, raw_prompt):
     low_energy_rules = ""
@@ -195,6 +340,7 @@ def build_meta_synthesis_prompt(energy_level, pressure_state, raw_prompt):
                 Output ONLY the instruction block for the secondary LLM. No greeting, no markdown titles.
                 """
 
+
 def build_execution_payload(dynamic_system_instruction, energy_level, pressure_state, raw_prompt):
     if is_low_energy(energy_level):
         format_lock = """
@@ -223,6 +369,7 @@ THEIR ASSIGNMENT OR QUESTION:
 {raw_prompt}
 """
 
+
 def build_fallback_payload(energy_level, pressure_state, raw_prompt):
     if is_low_energy(energy_level):
         return f"""You help exhausted students. Energy {energy_level}/5, pressure {pressure_state}.
@@ -236,10 +383,12 @@ Assignment: {raw_prompt}
 
 Give 3 numbered next steps, then brief bullets only if needed. Under 150 words."""
 
+
 def run_primary_model(payload):
     g_client = genai.Client(api_key=gemini_key)
     response = g_client.models.generate_content(model=primary_model, contents=payload)
     return response.text
+
 
 def run_backup_model(payload):
     groq_client = Groq(api_key=groq_key)
@@ -249,8 +398,10 @@ def run_backup_model(payload):
     )
     return chat_completion.choices[0].message.content
 
+
 def api_keys_configured():
     return bool(gemini_key or groq_key)
+
 
 def parse_next_steps(text):
     """Try to split AI output into three numbered steps for card UI."""
@@ -275,8 +426,10 @@ def parse_next_steps(text):
         return chunks[:3]
     return None
 
+
 def steps_plain_text(steps):
     return "\n".join(f"{i + 1}. {step}" for i, step in enumerate(steps))
+
 
 def render_output_actions(plain_text):
     payload = json.dumps(plain_text)
@@ -317,6 +470,7 @@ def render_output_actions(plain_text):
         height=70,
     )
 
+
 def render_step_cards(steps):
     for i, step in enumerate(steps, start=1):
         st.markdown(
@@ -328,6 +482,7 @@ def render_step_cards(steps):
             """,
             unsafe_allow_html=True,
         )
+
 
 def render_results(output_text):
     steps = parse_next_steps(output_text)
@@ -350,14 +505,16 @@ def render_results(output_text):
         use_container_width=True,
     )
 
+
 def show_unavailable_message():
     if is_dev_mode():
         st.error("API keys missing. Set GEMINI_API_KEY and/or GROQ_API_KEY in `.env` or host settings.")
     else:
         st.error("ContextAI is briefly unavailable. Please try again in a few minutes.")
 
+
 # =====================================================================
-# 3. UI
+# 5. THEME
 # =====================================================================
 def inject_theme():
     st.markdown(
@@ -381,7 +538,6 @@ def inject_theme():
         section[data-testid="stSidebar"] > div {
             background: transparent;
         }
-        /* Softer blocks — no harsh white panels */
         [data-testid="stVerticalBlock"] > div:has(> [data-testid="stVerticalBlockBorderWrapper"]) {
             background: rgba(255, 255, 255, 0.03);
             border: 1px solid rgba(255, 255, 255, 0.07);
@@ -490,6 +646,20 @@ def inject_theme():
         .preset-row button {
             font-size: 0.88rem !important;
         }
+        /* Auth tabs */
+        .stTabs [data-baseweb="tab-list"] {
+            background: rgba(255,255,255,0.03);
+            border-radius: 10px;
+            gap: 0.25rem;
+        }
+        .stTabs [data-baseweb="tab"] {
+            border-radius: 8px;
+            color: #9aa8bc !important;
+        }
+        .stTabs [aria-selected="true"] {
+            background: rgba(126,184,218,0.15) !important;
+            color: #e8ecf4 !important;
+        }
         @media (max-width: 768px) {
             .main-wrap { padding: 0 0.25rem 2rem 0.25rem; }
             .step-text { font-size: 1.12rem !important; }
@@ -502,30 +672,59 @@ def inject_theme():
     )
 
 
+# =====================================================================
+# 6. APP ENTRY POINT
+# =====================================================================
 st.set_page_config(
     page_title="ContextAI — Study when you're tired",
     layout="centered",
     page_icon="🌙",
 )
 
+# --- Auth gate: only show login screen if Supabase is configured and user is not logged in ---
+if use_supabase() and not get_current_user():
+    render_auth_screen()
+    st.stop()
+
 inject_theme()
 
+# --- Session state defaults ---
 if "active_response" not in st.session_state:
     st.session_state.active_response = None
+if "font_large" not in st.session_state:
+    st.session_state.font_large = False
+
+# Smart energy pre-fill for returning users (only set once per session)
+if "energy_prefilled" not in st.session_state:
+    st.session_state.energy_prefilled = True
+    pattern = fetch_energy_pattern()
+    st.session_state.energy = pattern if pattern else 2
+
 if "energy" not in st.session_state:
     st.session_state.energy = 2
 if "pressure" not in st.session_state:
     st.session_state.pressure = "Moderate"
-if "font_large" not in st.session_state:
-    st.session_state.font_large = False
 
+# --- Sidebar ---
 with st.sidebar:
     st.title("🌙 ContextAI")
-    st.caption("For students working late.")
-    if use_supabase():
-        st.caption("☁️ Sessions saved to cloud")
+
+    # Show account info if logged in
+    user = get_current_user()
+    if user:
+        email_display = getattr(user, "email", None) or "your account"
+        st.caption(f"👤 {email_display}")
+        st.caption("☁️ Sessions saved to your account")
+        if st.button("Log out", use_container_width=True):
+            try_sign_out()
+            st.rerun()
     else:
-        st.caption("💾 Local save — add SUPABASE_URL + SUPABASE_KEY to `.env`")
+        st.caption("For students working late.")
+        if use_supabase():
+            st.caption("☁️ Sessions saved to cloud")
+        else:
+            st.caption("💾 Local save — add SUPABASE_URL + SUPABASE_KEY to `.env`")
+
     if is_dev_mode() and use_supabase():
         if supabase_key.startswith("sb_publishable_"):
             st.warning("SUPABASE_KEY looks like a publishable key. Use the **secret** or **service_role** key.")
@@ -551,15 +750,37 @@ with st.sidebar:
                 else:
                     st.write(item[4])
 
+# --- Main UI ---
 font_class = "font-large" if st.session_state.font_large else ""
 st.markdown(f'<div class="main-wrap {font_class}">', unsafe_allow_html=True)
 
-st.markdown("## 🌙 ContextAI")
-st.markdown(
-    '<p class="hero-tagline">Paste your assignment. Get <strong>3 next steps</strong> '
-    "you can start tonight — sized to how tired you are.</p>",
-    unsafe_allow_html=True,
-)
+# Personalised greeting for logged-in users
+user = get_current_user()
+if user:
+    email_display = getattr(user, "email", "") or ""
+    first_name = email_display.split("@")[0].split(".")[0].capitalize()
+    history_count = len(fetch_historical_metrics())
+    if history_count > 0:
+        st.markdown(f"## 🌙 Hey {first_name}")
+        st.markdown(
+            f'<p class="hero-tagline">You\'ve got <strong>{history_count} sessions</strong> logged. '
+            "Paste tonight's task — get <strong>3 next steps</strong> sized to how tired you are.</p>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(f"## 🌙 Welcome, {first_name}")
+        st.markdown(
+            '<p class="hero-tagline">Paste your assignment. Get <strong>3 next steps</strong> '
+            "you can start tonight — sized to how tired you are.</p>",
+            unsafe_allow_html=True,
+        )
+else:
+    st.markdown("## 🌙 ContextAI")
+    st.markdown(
+        '<p class="hero-tagline">Paste your assignment. Get <strong>3 next steps</strong> '
+        "you can start tonight — sized to how tired you are.</p>",
+        unsafe_allow_html=True,
+    )
 
 fa, fb = st.columns(2)
 with fa:
