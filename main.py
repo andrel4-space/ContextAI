@@ -276,6 +276,35 @@ def fetch_energy_pattern():
         return None
 
 
+def fetch_last_mood():
+    """Returns (energy, pressure) from the most recent session, or (None, None)."""
+    try:
+        history = fetch_historical_metrics()
+        if not history:
+            return None, None
+        last = history[0]
+        return last[1], last[2]
+    except Exception:
+        return None, None
+
+
+def fetch_last_session_preview():
+    """Returns a short preview of the last session for the greeting."""
+    try:
+        history = fetch_historical_metrics()
+        if not history:
+            return None
+        last = history[0]
+        return {
+            "timestamp": last[0],
+            "energy": last[1],
+            "pressure": last[2],
+            "prompt_preview": last[3][:60] + ("…" if len(last[3]) > 60 else ""),
+        }
+    except Exception:
+        return None
+
+
 # =====================================================================
 # 4. CONFIGURATION
 # =====================================================================
@@ -693,11 +722,12 @@ if "active_response" not in st.session_state:
 if "font_large" not in st.session_state:
     st.session_state.font_large = False
 
-# Smart energy pre-fill for returning users (only set once per session)
-if "energy_prefilled" not in st.session_state:
-    st.session_state.energy_prefilled = True
-    pattern = fetch_energy_pattern()
-    st.session_state.energy = pattern if pattern else 2
+# Smart pre-fill: use last session's mood for returning users (only once per session)
+if "mood_prefilled" not in st.session_state:
+    st.session_state.mood_prefilled = True
+    last_energy, last_pressure = fetch_last_mood()
+    st.session_state.energy = last_energy if last_energy else 2
+    st.session_state.pressure = last_pressure if last_pressure else "Moderate"
 
 if "energy" not in st.session_state:
     st.session_state.energy = 2
@@ -758,15 +788,22 @@ user = get_current_user()
 if user:
     email_display = getattr(user, "email", "") or ""
     first_name = email_display.split("@")[0].split(".")[0].capitalize()
+    last_session = fetch_last_session_preview()
     history_count = len(fetch_historical_metrics())
-    if history_count > 0:
+
+    if last_session:
+        # Returning user — show last session context
         st.markdown(f"## 🌙 Hey {first_name}")
         st.markdown(
-            f'<p class="hero-tagline">You\'ve got <strong>{history_count} sessions</strong> logged. '
-            "Paste tonight's task — get <strong>3 next steps</strong> sized to how tired you are.</p>",
+            f'<p class="hero-tagline">'
+            f'Last time you were at <strong>⚡{last_session["energy"]}/5</strong> — '
+            f'<em>{last_session["prompt_preview"]}</em><br>'
+            f"Mood pre-filled from your last session. Just paste and go."
+            f'</p>',
             unsafe_allow_html=True,
         )
     else:
+        # First time user
         st.markdown(f"## 🌙 Welcome, {first_name}")
         st.markdown(
             '<p class="hero-tagline">Paste your assignment. Get <strong>3 next steps</strong> '
@@ -791,10 +828,21 @@ with fb:
         st.session_state.font_large = True
         st.rerun()
 
-st.markdown("#### 1. Your assignment")
+# Streak counter for returning users
+if user:
+    history_count = len(fetch_historical_metrics())
+    if history_count > 0:
+        streak_emoji = "🔥" if history_count >= 7 else "⚡"
+        st.markdown(
+            f'<p style="color:#7eb8da;font-size:0.85rem;margin:0 0 1rem 0;">'
+            f'{streak_emoji} {history_count} session{"s" if history_count != 1 else ""} completed</p>',
+            unsafe_allow_html=True,
+        )
+
+st.markdown("#### 1. What are you dealing with tonight?")
 raw_prompt = st.text_area(
     "Assignment",
-    placeholder="Paste the assignment, rubric, or what you're stuck on…",
+    placeholder="Paste your assignment, task, rubric, or whatever you're stuck on…",
     height=130,
     label_visibility="collapsed",
     key="assignment_input",
@@ -818,6 +866,19 @@ with p3:
         st.session_state.energy = 2
         st.session_state.pressure = "High Pressure"
         st.rerun()
+
+# Show "same as last time" for returning users
+if user:
+    last_energy, last_pressure = fetch_last_mood()
+    if last_energy and last_pressure:
+        if st.button(
+            f"Same as last time  ⚡{last_energy}/5 · {last_pressure}",
+            use_container_width=True,
+            help="Pre-fill with your last session's mood"
+        ):
+            st.session_state.energy = last_energy
+            st.session_state.pressure = last_pressure
+            st.rerun()
 
 energy_level = st.slider(
     "Energy tonight (1 = exhausted, 5 = wide awake)",
