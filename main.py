@@ -261,6 +261,124 @@ def fetch_historical_metrics():
         return []
 
 
+def save_review(stars, text):
+    """Save a user review to Supabase."""
+    try:
+        if use_supabase():
+            user = get_current_user()
+            email = getattr(user, "email", "anonymous") if user else "anonymous"
+            first_name = email.split("@")[0].split(".")[0].capitalize() if "@" in email else "User"
+            get_supabase().table("reviews").insert({
+                "client_id": get_client_id(),
+                "display_name": first_name,
+                "stars": stars,
+                "review_text": text,
+                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }).execute()
+            return True
+    except Exception as e:
+        if is_dev_mode():
+            st.warning(f"Could not save review: {e}")
+    return False
+
+
+def fetch_recent_reviews(limit=6):
+    """Fetch recent public reviews."""
+    try:
+        if use_supabase():
+            response = (
+                get_supabase()
+                .table("reviews")
+                .select("display_name, stars, review_text, created_at")
+                .order("id", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return response.data or []
+    except Exception:
+        pass
+    return []
+
+
+def fetch_average_rating():
+    """Return average star rating and total count."""
+    try:
+        if use_supabase():
+            response = get_supabase().table("reviews").select("stars").execute()
+            stars = [r["stars"] for r in (response.data or [])]
+            if stars:
+                return round(sum(stars) / len(stars), 1), len(stars)
+    except Exception:
+        pass
+    return None, 0
+
+
+def fetch_user_has_reviewed():
+    """Check if current user already left a review."""
+    try:
+        if use_supabase():
+            response = (
+                get_supabase()
+                .table("reviews")
+                .select("id")
+                .eq("client_id", get_client_id())
+                .limit(1)
+                .execute()
+            )
+            return bool(response.data)
+    except Exception:
+        pass
+    return False
+
+
+def render_review_prompt():
+    """Show star rating + review box after steps."""
+    if fetch_user_has_reviewed():
+        st.markdown(
+            '<p style="color:#7eb8da;font-size:0.85rem;text-align:center;margin:1rem 0;">✓ Thanks for your review!</p>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    st.markdown("---")
+    st.markdown("#### Did this help tonight?")
+
+    if "review_stars" not in st.session_state:
+        st.session_state.review_stars = 0
+
+    # Star selector
+    cols = st.columns(5)
+    star_labels = ["😞", "😕", "😐", "😊", "🤩"]
+    for i, col in enumerate(cols):
+        with col:
+            if st.button(
+                star_labels[i],
+                key=f"star_{i+1}",
+                use_container_width=True,
+                help=f"{i+1} star{'s' if i > 0 else ''}"
+            ):
+                st.session_state.review_stars = i + 1
+                st.rerun()
+
+    if st.session_state.review_stars > 0:
+        stars_display = "⭐" * st.session_state.review_stars
+        st.markdown(
+            f'<p style="text-align:center;font-size:1.2rem;margin:0.5rem 0;">{stars_display}</p>',
+            unsafe_allow_html=True,
+        )
+        review_text = st.text_input(
+            "One line — what did ContextAI help you do tonight?",
+            placeholder="e.g. Finally started my essay after staring at it for an hour",
+            key="review_text_input",
+            label_visibility="visible",
+        )
+        if st.button("Submit review", use_container_width=True, type="primary"):
+            if save_review(st.session_state.review_stars, review_text.strip()):
+                st.session_state.review_stars = 0
+                st.success("Thank you! Your review helps other students find ContextAI. 🌙")
+                st.rerun()
+
+
 def fetch_energy_pattern():
     """
     Returns the user's most common energy level from recent sessions.
@@ -970,8 +1088,10 @@ if run_clicked:
 if st.session_state.active_response:
     st.markdown("---")
     render_results(st.session_state.active_response)
+    render_review_prompt()
     if st.button("Start over with a new assignment", use_container_width=True):
         st.session_state.active_response = None
+        st.session_state.review_stars = 0
         st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
