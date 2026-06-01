@@ -754,6 +754,19 @@ with st.sidebar:
         else:
             st.caption("💾 Local save — add SUPABASE_URL + SUPABASE_KEY to `.env`")
 
+    st.markdown(
+        """
+        <a href="https://andrel4-space.github.io/ContextAI" target="_blank"
+           style="display:block;margin:0.5rem 0 1rem 0;padding:0.5rem 0.75rem;
+                  border-radius:10px;border:1px solid rgba(126,184,218,0.25);
+                  background:rgba(126,184,218,0.08);color:#7eb8da;
+                  font-size:0.88rem;text-decoration:none;text-align:center;">
+            ✦ How it works →
+        </a>
+        """,
+        unsafe_allow_html=True,
+    )
+
     if is_dev_mode() and use_supabase():
         if supabase_key.startswith("sb_publishable_"):
             st.warning("SUPABASE_KEY looks like a publishable key. Use the **secret** or **service_role** key.")
